@@ -3,6 +3,8 @@
 A practical, end-to-end guide to create and read Apache Iceberg tables in OneLake using Snowflake, then surface them in Microsoft Fabric.
 
 ### Table of Contents
+- [Quickstart](#quickstart)
+- [Conventions](#conventions)
 - [Background and Concepts](#background-and-concepts)
 - [Prerequisites](#prerequisites)
 - [1) Snowflake: Warehouse, Database, Schema, and Sample Data](#1-snowflake-warehouse-database-schema-and-sample-data)
@@ -15,7 +17,39 @@ A practical, end-to-end guide to create and read Apache Iceberg tables in OneLak
 - [Troubleshooting](#troubleshooting)
 - [7) Ingest Local CSVs (movies, ratings) into Fabric as Delta Tables](#7-ingest-local-csvs-movies-ratings-into-fabric-as-delta-tables)
 - [8) Read These Tables from Snowflake via Virtual Iceberg](#8-read-these-tables-from-snowflake-via-virtual-iceberg)
+- [FAQ](#faq)
 - [References](#references)
+
+### Quickstart
+1) In Snowflake (as `ACCOUNTADMIN`):
+```sql
+CREATE OR REPLACE WAREHOUSE HOL_WH WITH WAREHOUSE_SIZE='X-SMALL' AUTO_SUSPEND=60 AUTO_RESUME=TRUE INITIALLY_SUSPENDED=TRUE;
+CREATE OR REPLACE DATABASE SnowflakeQS; USE DATABASE SnowflakeQS;
+CREATE OR REPLACE SCHEMA IcebergTest; USE SCHEMA IcebergTest;
+CREATE OR REPLACE EXTERNAL VOLUME FabricExVol STORAGE_LOCATIONS = ((
+  NAME='FabricExVol', STORAGE_PROVIDER='AZURE',
+  STORAGE_BASE_URL='azure://onelake.dfs.fabric.microsoft.com/<Workspace>/<Lakehouse>.Lakehouse/Files/',
+  AZURE_TENANT_ID='<AZURE_TENANT_ID>'
+));
+```
+2) Grant Fabric access to Snowflake’s service principal (see step 3 below).
+
+3) Create the Iceberg table in OneLake:
+```sql
+CREATE OR REPLACE ICEBERG TABLE SnowflakeQS.IcebergTest.spotify_users (
+  user_id INT, gender STRING, age INT, country STRING,
+  subscription_type STRING, listening_time INT,
+  songs_played_per_day INT, skip_rate DOUBLE
+)
+EXTERNAL_VOLUME='FabricExVol' CATALOG=snowflake BASE_LOCATION='spotify_users';
+```
+
+4) Load CSV via stage and COPY (see Load section), then create a OneLake Shortcut in Fabric Tables to folder `spotify_users/`.
+
+### Conventions
+- Angle brackets like `<Value>` denote placeholders to replace with your values.
+- Paths shown with `azure://` target OneLake (replace any `https://` with `azure://`).
+- Example names: database `SnowflakeQS`, schema `IcebergTest`, table `spotify_users`.
 
 ### Background and Concepts
 - **Apache Iceberg (table format)**
@@ -184,7 +218,7 @@ You should see a JSON response with a `metadataLocation` like:
    - Do NOT select `data/` or `metadata/` subfolders.
 7. Click Next → Create to finish.
 
-Notes:1
+Notes:
 - If your Lakehouse is schema-enabled, create the shortcut under the schema (for example, `dbo`). If not schema-enabled, create it directly under `Tables`.
 - OneLake shortcuts for this feature must be in the same region as the target location.
 
@@ -260,6 +294,14 @@ skip_rate DOUBLE
 - The feature has region limitations; ensure the shortcut and target are in the same region and that your region is supported in Fabric.
 
 ---
+
+### FAQ
+- Q: Can multiple engines write to the same Iceberg table simultaneously?
+  - A: Avoid concurrent writers unless they share a compatible catalog and locking; prefer a single writer (Snowflake or Fabric/Spark) at a time.
+- Q: Why doesn’t my Fabric Shortcut show the table?
+  - A: Ensure you target the table folder (e.g., `spotify_users/`) under Tables, not `data/` or `metadata/`, and that region and admin toggles are correct.
+- Q: Where do I find the Iceberg metadata path for Snowflake references?
+  - A: Use `SYSTEM$GET_ICEBERG_TABLE_INFORMATION('<DB>.<SCHEMA>.<TABLE>')` and copy the `metadataLocation`.
 
 ### 7) Ingest Local CSVs (movies, ratings) into Fabric as Delta Tables
 Use your existing Lakehouse to create Delta tables from CSVs and enable virtualization to Iceberg for Snowflake reads.
