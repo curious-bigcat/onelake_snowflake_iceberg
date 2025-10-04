@@ -1,6 +1,21 @@
-## Snowflake ↔ Microsoft Fabric (OneLake) Iceberg Integration — Quick Steps
+## Snowflake ↔ Microsoft Fabric (OneLake) with Apache Iceberg
 
-Follow these steps to set up an Iceberg table in Snowflake backed by OneLake storage in Microsoft Fabric, load sample data, and access it from Fabric via a shortcut.
+A practical, end-to-end guide to create and read Apache Iceberg tables in OneLake using Snowflake, then surface them in Microsoft Fabric.
+
+### Table of Contents
+- [Background and Concepts](#background-and-concepts)
+- [Prerequisites](#prerequisites)
+- [1) Snowflake: Warehouse, Database, Schema, and Sample Data](#1-snowflake-warehouse-database-schema-and-sample-data)
+- [2) Snowflake: Create External Volume pointing to OneLake](#2-snowflake-create-external-volume-pointing-to-onelake)
+- [3) Enable Permissions for Snowflake to Access Fabric](#3-enable-permissions-for-snowflake-to-access-fabric)
+- [4) Snowflake: Create Iceberg Table in OneLake and Load Sample Data](#4-snowflake-create-iceberg-table-in-onelake-and-load-sample-data)
+- [5) Fabric: Create a OneLake Shortcut to the Iceberg Table](#5-fabric-create-a-onelake-shortcut-to-the-iceberg-table)
+- [6) Validation](#6-validation)
+- [Load spotify.csv (COPY INTO)](#load-spotifycsv-copy-into)
+- [Troubleshooting](#troubleshooting)
+- [7) Ingest Local CSVs (movies, ratings) into Fabric as Delta Tables](#7-ingest-local-csvs-movies-ratings-into-fabric-as-delta-tables)
+- [8) Read These Tables from Snowflake via Virtual Iceberg](#8-read-these-tables-from-snowflake-via-virtual-iceberg)
+- [References](#references)
 
 ### Background and Concepts
 - **Apache Iceberg (table format)**
@@ -187,6 +202,48 @@ You should now see the Iceberg table available in the Lakehouse Tables. Use the 
 
 ---
 
+### Load spotify.csv (COPY INTO)
+Below is a minimal, reproducible load flow using a Snowflake internal stage. Adjust paths to your local file.
+
+```sql
+-- 1) Create a CSV file format
+CREATE OR REPLACE FILE FORMAT csv_fmt_spotify
+  TYPE = 'CSV'
+  FIELD_DELIMITER = ','
+  SKIP_HEADER = 1
+  FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+  NULL_IF = ('', 'NULL', 'null');
+
+-- 2) Create an internal stage
+CREATE OR REPLACE STAGE spotify_stage FILE_FORMAT = csv_fmt_spotify;
+
+-- 3) From your machine, upload the file into the stage using SnowSQL
+-- snowsql -q "PUT file:///absolute/path/to/spotify.csv @spotify_stage AUTO_COMPRESS=TRUE OVERWRITE=TRUE"
+
+-- 4) Load into the Iceberg table
+COPY INTO SnowflakeQS.IcebergTest.spotify_users
+FROM @spotify_stage
+FILE_FORMAT = (FORMAT_NAME = csv_fmt_spotify)
+ON_ERROR = 'ABORT_STATEMENT';
+
+-- 5) Validate
+SELECT COUNT(*) FROM SnowflakeQS.IcebergTest.spotify_users;
+SELECT * FROM SnowflakeQS.IcebergTest.spotify_users LIMIT 10;
+```
+
+Schema used for `spotify_users`:
+
+```text
+user_id INT,
+gender STRING,
+age INT,
+country STRING,
+subscription_type STRING,
+listening_time INT,
+songs_played_per_day INT,
+skip_rate DOUBLE
+```
+
 ### Troubleshooting
 - If `DESC EXTERNAL VOLUME` does not show `AZURE_MULTI_TENANT_APP_NAME`, verify `STORAGE_PROVIDER = 'AZURE'` and the `azure://` URL.
 - Permission errors when creating/loading the table usually indicate the service principal lacks Workspace access or the Admin toggle is off.
@@ -295,4 +352,15 @@ SELECT * FROM SnowflakeQS.ICEBERGTEST.ratings LIMIT 10;
 ---
 
 ### References
-- GitHub repository used for this walkthrough: [onelake_snowflake_iceberg](https://github.com/curious-bigcat/onelake_snowflake_iceberg.git)
+- GitHub repository for this guide: [onelake_snowflake_iceberg](https://github.com/curious-bigcat/onelake_snowflake_iceberg.git)
+- Snowflake: External Volumes (docs) — authentication and storage setup
+  - `https://docs.snowflake.com/en/user-guide/tables-external-intro#external-volumes`
+- Snowflake: Iceberg Tables (docs)
+  - `https://docs.snowflake.com/en/user-guide/tables-iceberg`
+- Microsoft Fabric: OneLake and Lakehouse (docs)
+  - `https://learn.microsoft.com/fabric/onelake/onelake-overview`
+  - `https://learn.microsoft.com/fabric/data-engineering/lakehouse-overview`
+- Microsoft Fabric: OneLake Shortcuts (docs)
+  - `https://learn.microsoft.com/fabric/onelake/onelake-shortcuts`
+- Apache Iceberg (project site)
+  - `https://iceberg.apache.org/`
