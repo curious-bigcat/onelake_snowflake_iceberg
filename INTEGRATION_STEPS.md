@@ -2,6 +2,43 @@
 
 Follow these steps to set up an Iceberg table in Snowflake backed by OneLake storage in Microsoft Fabric, load sample data, and access it from Fabric via a shortcut.
 
+### Background and Concepts
+- **Apache Iceberg (table format)**
+  - A table specification for data lakes that adds ACID transactions and schema/partition evolution on top of object storage.
+  - Tables consist of Parquet (or ORC/Avro) data files plus metadata hierarchies:
+    - `metadata/` folder stores snapshot JSONs (table version history, schema, partition spec, properties).
+    - Manifest lists and manifest files track sets of data files and delete files per snapshot.
+    - Supports time travel, schema evolution, partition evolution, and row/positional deletes.
+- **Snowflake + Iceberg**
+  - Snowflake can both write to and read from Iceberg tables stored in external object stores.
+  - Two catalog modes:
+    1. `CATALOG = snowflake` with `EXTERNAL_VOLUME` + `BASE_LOCATION` → Snowflake manages the Iceberg catalog metadata in the table’s `metadata/` within your storage and handles transactions/writes.
+    2. `CATALOG = <catalog_integration>` with `METADATA_FILE_PATH` → Snowflake references an existing Iceberg table by its metadata JSON file path (read/write depends on permissions and compatibility of the producer).
+  - `EXTERNAL VOLUME` holds storage connection details and consent; it is required for Snowflake to access OneLake.
+- **Microsoft Fabric OneLake + Lakehouse**
+  - OneLake backs Lakehouse items. A Lakehouse exposes logical areas:
+    - `Files/` for arbitrary files (CSV, Parquet, Iceberg folder structures, etc.).
+    - `Tables/` for managed Delta Lake tables (schema-enabled under e.g., `dbo/`).
+  - Fabric supports OneLake Shortcuts to reference locations in OneLake or external stores.
+  - Fabric can virtualize Delta Lake tables to an Iceberg view for interoperability; a preview toggle enables virtualization for OneLake Shortcuts under Tables.
+- **Security & Authentication**
+  - When you create a Snowflake `EXTERNAL VOLUME`, Snowflake exposes an Azure multi-tenant service principal (`AZURE_MULTI_TENANT_APP_NAME`). Grant this principal access (Contributor) to your Fabric Workspace.
+  - Ensure Admin toggles are enabled in Fabric for service principals and OneLake external app access.
+- **Folder Layout & Metadata Discovery**
+  - An Iceberg table folder typically contains `metadata/`, `data/`, and optionally `snapshots/` and `refs/`.
+  - In Snowflake, `SYSTEM$GET_ICEBERG_TABLE_INFORMATION('<DB>.<SCHEMA>.<TABLE>')` returns `metadataLocation` you can use to validate or reference the table.
+- **Interoperability Patterns**
+  1. Snowflake writes Iceberg into OneLake (`CATALOG = snowflake`, `EXTERNAL_VOLUME` + `BASE_LOCATION`). Fabric reads via OneLake Shortcut pointing to the table folder.
+  2. Fabric produces Delta tables under `Tables/`; Fabric virtualizes them to Iceberg. Snowflake reads by creating an Iceberg table with `CATALOG = <catalog_integration>` + `METADATA_FILE_PATH` pointing to the latest `metadata/*.metadata.json`.
+  3. Mixed ecosystems: ensure only one engine writes at a time to avoid conflicting writers unless you have a shared compatible catalog and locking.
+- **Limitations & Considerations**
+  - Region alignment is required for OneLake Shortcuts and target locations.
+  - Certain Iceberg partition transforms may not be supported by Fabric’s virtualization (e.g., `bucket[N]`, `truncate[W]`, `void`).
+  - Avoid moving/copying Iceberg table folders without rewriting metadata; Iceberg metadata uses absolute references.
+  - Private links are not supported for this integration flow.
+  - For performance, choose partitions that match common filters (e.g., by `country`), but validate transform compatibility with Fabric virtualization if you plan to surface in Lakehouse.
+  - Writer concurrency across different engines must be carefully controlled; use a single writer system per table at a time for safety.
+
 ### Prerequisites
 - **Snowflake**: Ability to use the `ACCOUNTADMIN` role (or equivalent privileges).
 - **Microsoft Fabric**: Admin Portal access to enable service principals, and Contributor permissions on the target Workspace.
@@ -256,3 +293,6 @@ SELECT * FROM SnowflakeQS.ICEBERGTEST.ratings LIMIT 10;
 
 
 ---
+
+### References
+- GitHub repository used for this walkthrough: [onelake_snowflake_iceberg](https://github.com/curious-bigcat/onelake_snowflake_iceberg.git)
